@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
-from bson import ObjectId
+from bson.objectid import ObjectId
+import logging
 
 from database.task_repository import TaskRepository
+
+logger = logging.getLogger(__name__)
 
 
 class EmergencyModeAgent:
@@ -28,20 +31,40 @@ class EmergencyModeAgent:
     def _utc_now(self) -> datetime:
         return datetime.now(timezone.utc)
 
+    def _get_all_steps(self, task: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Return a list of all steps in execution order.
+        Handles both dictionary and list formats for execution_plan.
+        """
+        steps = []
+        execution_plan = task.get("execution_plan")
+        if not execution_plan:
+            return steps
+
+        phases = []
+        if isinstance(execution_plan, dict):
+            phases = execution_plan.get("phases", [])
+        elif isinstance(execution_plan, list):
+            phases = execution_plan
+
+        for phase in phases:
+            if isinstance(phase, dict):
+                for step in phase.get("steps", []):
+                    if isinstance(step, dict):
+                        steps.append(step)
+        return steps
+
     def _get_all_incomplete_steps(self, task: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
         Return a list of all incomplete steps in execution order.
         """
-        steps = []
-        execution_plan = task.get("execution_plan")
-        if not execution_plan or not isinstance(execution_plan, dict):
-            return steps
-
-        for phase in execution_plan.get("phases", []):
-            for step in phase.get("steps", []):
-                if step.get("status") != "Completed":
-                    steps.append(step)
-        return steps
+        return [s for s in self._get_all_steps(task) if s.get("status") != "Completed"]
+        
+    def _get_completed_step_ids(self, task: Dict[str, Any]) -> set[str]:
+        """
+        Return a set of IDs for all completed steps.
+        """
+        return {s.get("step_id") for s in self._get_all_steps(task) if s.get("status") == "Completed" and s.get("step_id")}
 
     def _calculate_time_saved(self, task: Dict[str, Any], skippable_steps: List[str]) -> float:
         """
@@ -67,19 +90,18 @@ class EmergencyModeAgent:
             return 3
         return 4
 
-    def _generate_recommended_work_order(self, task: Dict[str, Any], skippable_steps: List[str]) -> List[str]:
+    def _generate_recommended_work_order(self, task: Dict[str, Any]) -> List[str]:
         """
-        Sort non-skipped steps by dependencies, emergency priority, and execution order.
+        Sort incomplete steps by dependencies, emergency priority, and execution order.
         For simplicity, we assume the original execution plan list order handles dependencies naturally.
-        We just need to stably sort by priority.
+        We just need to stably sort by priority (Mandatory -> Recommended -> Optional).
         """
         incomplete_steps = self._get_all_incomplete_steps(task)
-        focus_objects = [step for step in incomplete_steps if step.get("step_id") not in skippable_steps]
 
         # Sort based on priority weight. Python's sort is stable, preserving execution order for ties.
-        focus_objects.sort(key=lambda x: self._get_priority_weight(str(x.get("emergency_priority", ""))))
+        incomplete_steps.sort(key=lambda x: self._get_priority_weight(str(x.get("emergency_priority", ""))))
 
-        return [step.get("step_id", "") for step in focus_objects if step.get("step_id")]
+        return [step.get("step_id", "") for step in incomplete_steps if step.get("step_id")]
 
     # ======================================================
     # Public API Methods
@@ -166,17 +188,20 @@ class EmergencyModeAgent:
             "remaining_estimated_hours": remaining_hours
         }
 
-    def determine_risk_level(self, remaining_hours: int, remaining_estimated_hours: float, is_overdue: bool) -> str:
+    def determine_risk_level(self, remaining_hours: int, remaining_estimated_hours: float, is_overdue: bool, completion_percentage: float) -> str:
         """
-        Determine risk level using the heuristic:
-        Safe: remaining >= 1.5x estimated
+        Determine risk level using the heuristic considering remaining hours, workload, completion %, and proximity.
+        Safe: remaining >= 1.5x estimated AND completion > 25% (or early stages)
         Warning: remaining >= estimated
-        Critical: remaining < estimated or overdue
+        Critical: remaining < estimated, overdue, or deadline proximity < 24h with low completion
         """
         if is_overdue or remaining_hours < remaining_estimated_hours:
             return "Critical"
             
-        if remaining_hours >= (remaining_estimated_hours * 1.5):
+        if remaining_hours < 24 and completion_percentage < 75:
+            return "Critical"
+            
+        if remaining_hours >= (remaining_estimated_hours * 1.5) and remaining_hours > 24:
             return "Safe"
             
         return "Warning"
@@ -239,26 +264,37 @@ class EmergencyModeAgent:
         # Calculate workload
         workload = self.calculate_workload(task)
         
+        # Get overall completion
+        overall_completion = task.get("progress", {}).get("overall_completion", 0)
+
         # Risk assessment
-        risk_level = self.determine_risk_level(hours, workload["remaining_estimated_hours"], is_overdue)
+        risk_level = self.determine_risk_level(hours, workload["remaining_estimated_hours"], is_overdue, overall_completion)
         
         # Identify skippable steps
         skippable_steps = self.find_skippable_steps(task)
         time_saved = self._calculate_time_saved(task, skippable_steps)
         
         # Focus Steps and Recommended Order
-        recommended_order = self._generate_recommended_work_order(task, skippable_steps)
-        # Focus steps are just the recommended order elements, omitting any skippable steps (already handled in _generate)
-        focus_steps = recommended_order.copy()
+        recommended_order = self._generate_recommended_work_order(task)
+        
+        completed_step_ids = self._get_completed_step_ids(task)
+        step_deps = {
+            s.get("step_id"): s.get("dependencies", []) 
+            for s in self._get_all_steps(task) 
+            if s.get("step_id")
+        }
+        
+        focus_steps = []
+        for step_id in recommended_order:
+            deps = step_deps.get(step_id, [])
+            if all(d in completed_step_ids for d in deps):
+                focus_steps.append(step_id)
         
         # Generate recovery plan
         recovery_plan = self.generate_recovery_plan(task, skippable_steps)
         
         # Final decision
         generate_solution = self.should_generate_solution(hours, workload["remaining_steps"])
-        
-        # Get overall completion
-        overall_completion = task.get("progress", {}).get("overall_completion", 0)
 
         # Build schema
         emergency_mode_data = {
@@ -284,3 +320,4 @@ class EmergencyModeAgent:
 
         # Update via TaskRepository
         TaskRepository.update_emergency_mode(task.get("_id") or ObjectId(task_id), emergency_mode_data)
+        logger.info(f"Emergency mode updated for task {task_id}")

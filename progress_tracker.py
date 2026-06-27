@@ -13,6 +13,9 @@ from bson import ObjectId
 
 from database.database import tasks
 from database.task_repository import TaskRepository
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ==========================================================
@@ -173,6 +176,7 @@ class ProgressTrackerAgent:
         remaining_hours = 0.0
         completed_step_ids: List[str] = []
         pending_step_ids: List[str] = []
+        blocked_step_ids: List[str] = []
 
         for step in self._get_all_steps(task):
             total_steps += 1
@@ -190,6 +194,12 @@ class ProgressTrackerAgent:
         if total_steps > 0:
             overall_completion = round((completed_steps / total_steps) * 100, 2)
 
+        completed_ids_set = set(completed_step_ids)
+        for step in self._get_all_steps(task):
+            if step.get("status") != "Completed":
+                if not self._is_dependency_satisfied(step, completed_ids_set):
+                    blocked_step_ids.append(step["step_id"])
+
         return {
             "completed_steps": completed_steps,
             "total_steps": total_steps,
@@ -197,6 +207,7 @@ class ProgressTrackerAgent:
             "remaining_hours": round(remaining_hours, 2),
             "completed_step_ids": completed_step_ids,
             "pending_step_ids": pending_step_ids,
+            "blocked_step_ids": blocked_step_ids,
             "overall_completion": overall_completion,
         }
 
@@ -216,6 +227,10 @@ class ProgressTrackerAgent:
             "completed_hours": metrics["completed_hours"],
             "completed_step_ids": metrics["completed_step_ids"],
             "pending_step_ids": metrics["pending_step_ids"],
+            "blocked_steps": len(
+                metrics["blocked_step_ids"]
+            ),
+            "blocked_step_ids": metrics["blocked_step_ids"],
             "next_available_steps": self.get_next_available_steps(task),
             "last_updated": self._utc_now()
         }
@@ -239,12 +254,13 @@ class ProgressTrackerAgent:
 
         progress = self._build_progress_json(task)
 
-        TaskRepository.update_task_progress(
+        TaskRepository.update_progress(
             task_id=task.get("_id", ObjectId(task_id)),
             execution_plan=task["execution_plan"],
             progress=progress
         )
 
+        logger.info(f"Progress initialized for task {task_id}")
         return progress
 
     def update_progress(self, task_id: str) -> Dict[str, Any]:
@@ -261,14 +277,20 @@ class ProgressTrackerAgent:
         execution_plan = self._get_execution_plan(task)
 
         self.calculate_phase_progress(task)
+
+        TaskRepository.update_execution_plan(
+        task.get("_id", ObjectId(task_id)),
+        execution_plan
+    )
         progress = self._build_progress_json(task)
 
-        TaskRepository.update_task_progress(
+        TaskRepository.update_progress(
             task_id=task.get("_id", ObjectId(task_id)),
             execution_plan=execution_plan,
             progress=progress
         )
 
+        logger.info(f"Progress updated for task {task_id}")
         return progress
 
     def mark_step_in_progress(self, task_id: str, step_id: str) -> Dict[str, Any]:
@@ -294,6 +316,9 @@ class ProgressTrackerAgent:
 
         step["status"] = "In Progress"
         step["started_at"] = self._utc_now()
+
+        # Persist execution plan before recalculating progress
+        TaskRepository.update_execution_plan(task.get("_id", ObjectId(task_id)), task["execution_plan"])
 
         # Commit changes
         self.update_progress(task_id)
@@ -322,6 +347,9 @@ class ProgressTrackerAgent:
         step["status"] = "Completed"
         step["completed_at"] = self._utc_now()
 
+        # Persist execution plan before recalculating progress
+        TaskRepository.update_execution_plan(task.get("_id", ObjectId(task_id)), task["execution_plan"])
+
         # Commit changes
         self.update_progress(task_id)
 
@@ -343,6 +371,7 @@ class ProgressTrackerAgent:
                 if "completed_at" in step:
                     del step["completed_at"]
 
+        TaskRepository.update_execution_plan(task.get("_id", ObjectId(task_id)), task["execution_plan"])
         return self.initialize_progress(task_id)
 
     def calculate_phase_progress(self, task: Dict[str, Any]) -> None:
@@ -377,24 +406,35 @@ class ProgressTrackerAgent:
                     return phase.get("title")
         return None
 
-    def get_current_step(self, task: Dict[str, Any]) -> Optional[str]:
+    def get_current_step(
+    self,
+    task: Dict[str, Any]
+) -> Optional[str]:
         """
         Return the current actionable step ID.
         """
+
         all_steps = self._get_all_steps(task)
-        
-        # 1. Prefer a running step
+
+        # Prefer a running step
         for step in all_steps:
             if step.get("status") == "In Progress":
                 return step["step_id"]
 
         metrics = self._calculate_metrics(task)
-        completed_ids_set = set(metrics["completed_step_ids"])
+        completed_ids_set = set(
+            metrics["completed_step_ids"]
+        )
 
-        # 2. Otherwise return first available pending step
+        # Otherwise return first available pending step
         for step in all_steps:
-            if step.get("status") == "Pending" or step.get("status") not in ("In Progress", "Completed"):
-                if self._is_dependency_satisfied(step, completed_ids_set):
+
+            if step.get("status") == "Pending":
+
+                if self._is_dependency_satisfied(
+                    step,
+                    completed_ids_set
+                ):
                     return step["step_id"]
 
         return None
@@ -406,17 +446,33 @@ class ProgressTrackerAgent:
         metrics = self._calculate_metrics(task)
         return metrics["remaining_hours"]
 
-    def get_next_available_steps(self, task: Dict[str, Any]) -> List[str]:
+    def get_next_available_steps(
+    self,
+    task: Dict[str, Any]
+) -> List[str]:
         """
-        Return all steps that are ready to be worked on.
+        Return all Pending steps whose dependencies
+        have been satisfied and are ready to start.
         """
+
         metrics = self._calculate_metrics(task)
-        completed_ids_set = set(metrics["completed_step_ids"])
+        completed_ids_set = set(
+            metrics["completed_step_ids"]
+        )
 
         available_steps: List[str] = []
+
         for step in self._get_all_steps(task):
-            if step.get("status") != "Completed":
-                if self._is_dependency_satisfied(step, completed_ids_set):
-                    available_steps.append(step["step_id"])
+
+            if step.get("status") != "Pending":
+                continue
+
+            if self._is_dependency_satisfied(
+                step,
+                completed_ids_set
+            ):
+                available_steps.append(
+                    step["step_id"]
+                )
 
         return available_steps

@@ -5,9 +5,6 @@ from pydantic import BaseModel, Field
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import PromptTemplate
-from database.task_repository import TaskRepository
-from task_analysis import TaskAnalysisAgents
-from data_extraction import TaskExtractor
 import json
 import logging
 
@@ -120,7 +117,6 @@ class Phase(BaseModel):
     description="Completion percentage of the phase."
 )
     
-    steps: List[Step]
 
 class ExecutionPlan(BaseModel):
 
@@ -128,9 +124,92 @@ class ExecutionPlan(BaseModel):
 
     critical_path: List[str] = Field(
     default_factory=list,
-    description="Titles of mandatory execution steps."
+    description="IDs of mandatory execution steps."
+)
+    
+    total_estimated_hours: float = Field(
+    default=0.0,
+    description="Total estimated hours for the entire plan."
 )
 
+
+def validate_execution_plan(plan: ExecutionPlan) -> None:
+
+    seen_step_ids = set()
+    seen_phase_nos = set()
+
+    all_step_ids = {
+        step.step_id
+        for phase in plan.phases
+        for step in phase.steps
+    }
+
+    for phase in plan.phases:
+
+        if phase.phase_no in seen_phase_nos:
+            logging.error(
+                f"Validation failure: Duplicate phase number {phase.phase_no}"
+            )
+            raise ValueError(
+                f"Duplicate phase number {phase.phase_no}"
+            )
+
+        seen_phase_nos.add(phase.phase_no)
+
+        for step in phase.steps:
+
+            if step.step_id in seen_step_ids:
+                logging.error(
+                    f"Validation failure: Duplicate step ID {step.step_id}"
+                )
+                raise ValueError(
+                    f"Duplicate step ID {step.step_id}"
+                )
+
+            seen_step_ids.add(step.step_id)
+
+            for dep in step.dependencies:
+
+                if dep == step.step_id:
+                    logging.error(
+                        f"Validation failure: Self dependency found '{dep}'"
+                    )
+                    raise ValueError(
+                        f"Self dependency found '{dep}'"
+                    )
+
+                if dep not in all_step_ids:
+                    logging.error(
+                        f"Validation failure: Dependency '{dep}' "
+                        f"for step '{step.step_id}' does not exist."
+                    )
+                    raise ValueError(
+                        f"Invalid dependency '{dep}' "
+                        f"in step '{step.step_id}'"
+                    )
+
+    crit_set = set()
+
+    for crit in plan.critical_path:
+
+        if crit in crit_set:
+            logging.error(
+                f"Validation failure: Duplicate critical path item '{crit}'"
+            )
+            raise ValueError(
+                f"Duplicate critical path item '{crit}'"
+            )
+
+        crit_set.add(crit)
+
+        if crit not in all_step_ids:
+            logging.error(
+                f"Validation failure: critical_path item '{crit}' "
+                f"does not match any step ID."
+            )
+            raise ValueError(
+                f"Critical path item '{crit}' does not exist."
+            )
 
 class ExecutionPlanAgent:
 
@@ -507,6 +586,19 @@ Project Information
             logging.error(f"Execution Plan Error: {e}")
             raise
 
+        if not plan.phases:
+            raise ValueError(
+                "Execution plan contains no phases."
+            )
+
+        # Normalize phase numbers first
+        for idx, phase in enumerate(
+            plan.phases,
+            start=1
+        ):
+            phase.phase_no = idx
+
+        # Calculate phase metadata
         for phase in plan.phases:
 
             phase.estimated_hours = sum(
@@ -516,10 +608,29 @@ Project Information
 
             phase.completion_percentage = 0
 
-            for i, step in enumerate(phase.steps, start=1):
-
+            for i, step in enumerate(
+                phase.steps,
+                start=1
+            ):
                 step.step_id = f"P{phase.phase_no}-S{i}"
                 step.status = "Pending"
+
+        plan.total_estimated_hours = sum(
+        phase.estimated_hours
+        for phase in plan.phases
+    )
+        
+        plan.critical_path = [
+            step.step_id
+            for phase in plan.phases
+            for step in phase.steps
+            if step.emergency_priority == "Mandatory"
+        ]
+                    
+
+        # Validate the generated plan
+        validate_execution_plan(plan)
+        logging.info("Plan generated and validated successfully.")
 
         return plan
                 
