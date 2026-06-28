@@ -20,14 +20,40 @@ export default function TasksHubView({ onSelectTask, onNewTask }: TasksHubViewPr
     }
   });
 
-  const handleDelete = async (e: React.MouseEvent, taskId: string) => {
-    e.stopPropagation();
-    // In a real scenario, call DELETE /tasks/:id
-    // await fetch(`http://localhost:8000/tasks/${taskId}`, { method: 'DELETE' });
-    // refetch();
-    console.log("Delete task", taskId);
-  };
+  const handleDelete = async (
+  e: React.MouseEvent,
+  taskId: string
+) => {
+  e.stopPropagation();
 
+  if (
+    !window.confirm(
+      "Delete this task permanently?"
+    )
+  ) {
+    return;
+  }
+
+  try {
+    const response = await fetch(
+      `http://localhost:8000/tasks/${taskId}`,
+      {
+        method: "DELETE",
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(
+        "Failed to delete task"
+      );
+    }
+
+    refetch();
+  } catch (error) {
+    console.error(error);
+    alert("Delete failed");
+  }
+};
   const getRiskColor = (risk: string) => {
     switch (risk.toLowerCase()) {
       case "critical": return "text-red-500 border-red-500/30 bg-red-500/10";
@@ -135,7 +161,7 @@ export default function TasksHubView({ onSelectTask, onNewTask }: TasksHubViewPr
                   {task.created_at && (
                     <div className="flex items-center gap-2 text-xs">
                       <span className="opacity-50">Created:</span>
-                      <span>{new Date(task.created_at).toLocaleDateString()}</span>
+                      <span>{task.created_at ? new Date(task.created_at).toLocaleDateString() : "N/A"}</span>
                     </div>
                   )}
                 </div>

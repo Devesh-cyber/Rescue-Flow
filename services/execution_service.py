@@ -226,10 +226,7 @@ class ExecutionService:
                         .isoformat()
                     )
 
-                    TaskRepository.update_completed_at(
-                        obj_id,
-                        completed_at
-                    )
+                    TaskRepository.update_completed_at(task_id)
 
                     logger.info(
                         "completed_at set"

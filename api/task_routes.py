@@ -176,3 +176,45 @@ async def get_task(task_id: str):
     except Exception as e:
         logger.error(f"API error getting task {task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/{task_id}")
+async def delete_task(task_id: str):
+    try:
+
+        if not ObjectId.is_valid(task_id):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid ObjectId"
+            )
+
+        result = TaskRepository.delete_task(
+            ObjectId(task_id)
+        )
+
+        if result.deleted_count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Task not found"
+            )
+
+        logger.info(
+            f"Task deleted: {task_id}"
+        )
+
+        return {
+            "success": True,
+            "task_id": task_id
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as e:
+        logger.error(
+            f"API error deleting task {task_id}: {e}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
