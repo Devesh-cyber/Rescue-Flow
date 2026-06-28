@@ -1,0 +1,6 @@
+{
+  "name": "Deadline Rescue",
+  "description": "An executive-grade AI-powered productivity system that transforms deadlines into clear, prioritize-sequenced roadmap milestones to eliminate burnout.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

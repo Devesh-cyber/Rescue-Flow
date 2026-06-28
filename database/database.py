@@ -10,4 +10,4 @@ db = client['deadline_rescue']
 
 tasks = db['tasks']
 
-print('MongoDB Connected')
+print("MONGO_URI =", os.getenv("MONGO_URI"))

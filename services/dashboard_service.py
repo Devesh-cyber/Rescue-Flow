@@ -24,7 +24,18 @@ class DashboardService:
     Service responsible for aggregating and returning dashboard 
     information from existing MongoDB documents.
     """
+    def _safe_float(self, value, default=0.0):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
 
+    def _safe_int(self, value, default=0):
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+    
     def _load_task(self, task_id: str) -> Dict[str, Any]:
         """
         Loads task from MongoDB and handles validation of task_id.
@@ -46,64 +57,111 @@ class DashboardService:
 
     def _build_task_summary(self, task: Dict[str, Any]) -> Dict[str, Any]:
         analysis = task.get("analysis", {})
+
         return {
             "title": analysis.get("title", ""),
             "task_type": analysis.get("task_type", ""),
             "deadline": analysis.get("deadline", ""),
             "priority": analysis.get("priority", ""),
             "difficulty": analysis.get("difficulty", ""),
-            "estimated_hours": float(analysis.get("estimated_hours", 0.0)),
+            "estimated_hours": self._safe_float(
+                analysis.get("estimated_hours")
+            ),
             "status": task.get("status", "")
         }
 
     def _build_progress_view(self, task: Dict[str, Any]) -> Dict[str, Any]:
         progress = task.get("progress", {})
+
         return {
-            "overall_completion": float(progress.get("overall_completion", 0.0)),
-            "completed_steps": int(progress.get("completed_steps", 0)),
-            "remaining_steps": int(progress.get("remaining_steps", 0)),
-            "blocked_steps": int(progress.get("blocked_steps", 0)),
+            "overall_completion": self._safe_float(
+                progress.get("overall_completion")
+            ),
+            "completed_steps": self._safe_int(
+                progress.get("completed_steps")
+            ),
+            "remaining_steps": self._safe_int(
+                progress.get("remaining_steps")
+            ),
+            "blocked_steps": self._safe_int(
+                progress.get("blocked_steps")
+            ),
             "current_phase": progress.get("current_phase", ""),
             "current_step": progress.get("current_step", ""),
-            "remaining_hours": float(progress.get("remaining_hours", 0.0)),
-            "completed_hours": float(progress.get("completed_hours", 0.0)),
-            "next_available_steps": progress.get("next_available_steps", []),
-            "last_updated": progress.get("last_updated", "")
+            "remaining_hours": self._safe_float(
+                progress.get("remaining_hours")
+            ),
+            "completed_hours": self._safe_float(
+                progress.get("completed_hours")
+            ),
+            "next_available_steps": progress.get(
+                "next_available_steps", []
+            ),
+            "last_updated": progress.get(
+                "last_updated", ""
+            )
         }
 
     def _build_execution_view(self, task: Dict[str, Any]) -> Dict[str, Any]:
         execution_plan = task.get("execution_plan", {})
-        total_phases = 0
-        total_steps = 0
         phases = execution_plan.get("phases", [])
-        
+
+        total_phases = len(phases) if isinstance(phases, list) else 0
+        total_steps = 0
+
         if isinstance(phases, list):
-            total_phases = len(phases)
             for phase in phases:
                 if isinstance(phase, dict):
-                    total_steps += len(phase.get("steps", []))
+                    total_steps += len(
+                        phase.get("steps", [])
+                    )
 
         return {
             "total_phases": total_phases,
             "total_steps": total_steps,
-            "critical_path": execution_plan.get("critical_path", []),
-            "total_estimated_hours": float(execution_plan.get("total_estimated_hours", 0.0)),
+            "critical_path": execution_plan.get(
+                "critical_path", []
+            ),
+            "total_estimated_hours": self._safe_float(
+                execution_plan.get(
+                    "total_estimated_hours"
+                )
+            ),
             "phases": phases
         }
 
     def _build_emergency_view(self, task: Dict[str, Any]) -> Dict[str, Any]:
         em = task.get("emergency_mode", {})
+
         return {
             "risk_level": em.get("risk_level", ""),
-            "remaining_days": int(em.get("remaining_days", 0)),
-            "remaining_hours": int(em.get("remaining_hours", 0)),
-            "remaining_estimated_hours": float(em.get("remaining_estimated_hours", 0.0)),
-            "overall_completion": float(em.get("overall_completion", 0.0)),
-            "steps_to_skip": em.get("steps_to_skip", []),
-            "focus_steps": em.get("focus_steps", []),
-            "recommended_work_order": em.get("recommended_work_order", []),
-            "recovery_plan": em.get("recovery_plan", []),
-            "generate_solution": bool(em.get("generate_solution", False))
+            "remaining_days": self._safe_int(
+                em.get("remaining_days")
+            ),
+            "remaining_hours": self._safe_int(
+                em.get("remaining_hours")
+            ),
+            "remaining_estimated_hours": self._safe_float(
+                em.get("remaining_estimated_hours")
+            ),
+            "overall_completion": self._safe_float(
+                em.get("overall_completion")
+            ),
+            "steps_to_skip": em.get(
+                "steps_to_skip", []
+            ),
+            "focus_steps": em.get(
+                "focus_steps", []
+            ),
+            "recommended_work_order": em.get(
+                "recommended_work_order", []
+            ),
+            "recovery_plan": em.get(
+                "recovery_plan", []
+            ),
+            "generate_solution": bool(
+                em.get("generate_solution", False)
+            )
         }
 
     def get_task_summary(self, task_id: str) -> Dict[str, Any]:
