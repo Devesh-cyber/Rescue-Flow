@@ -12,7 +12,7 @@ export default function TasksHubView({ onSelectTask, onNewTask }: TasksHubViewPr
   const { data: tasks = [], isLoading, isError, error, refetch } = useQuery<TaskListItem[]>({
     queryKey: ["tasks"],
     queryFn: async () => {
-      const response = await fetch("http://localhost:8000/tasks/");
+      const response = await fetch("https://rescue-flow-api.onrender.com/tasks/");
       if (!response.ok) {
         throw new Error("Failed to fetch tasks");
       }
@@ -36,7 +36,7 @@ export default function TasksHubView({ onSelectTask, onNewTask }: TasksHubViewPr
 
   try {
     const response = await fetch(
-      `http://localhost:8000/tasks/${taskId}`,
+      `https://rescue-flow-api.onrender.com/tasks/${taskId}`,
       {
         method: "DELETE",
       }

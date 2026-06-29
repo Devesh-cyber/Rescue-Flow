@@ -65,7 +65,7 @@ function App() {
       setIsDashboardLoading(true);
       setDashboardError(null);
       try {
-        const response = await fetch(`http://localhost:8000/dashboard/${activeTaskId}`);
+        const response = await fetch(`https://rescue-flow-api.onrender.com/dashboard/${activeTaskId}`);
         if (!response.ok) throw new Error(`API error: ${response.status}`);
         
         const data = await response.json();
@@ -108,11 +108,14 @@ function App() {
     setView("analyzing");
 
     try {
-      const response = await fetch("http://localhost:8000/tasks/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: text })
-      });
+  const response = await fetch(
+    "https://rescue-flow-api.onrender.com/tasks/create",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: text })
+    }
+  );
 
       if (!response.ok) {
         const errData = await response.json().catch(() => ({}));

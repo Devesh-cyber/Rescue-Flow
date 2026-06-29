@@ -15,7 +15,7 @@ export default function ExecutionView({ taskId, setView }: ExecutionViewProps) {
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["execution", taskId],
     queryFn: async () => {
-      const response = await fetch(`http://localhost:8000/execution/${taskId}`);
+      const response = await fetch(`https://rescue-flow-api.onrender.com/execution/${taskId}`);
       if (!response.ok) throw new Error("Failed to fetch execution plan");
       return response.json();
     }
@@ -23,7 +23,7 @@ export default function ExecutionView({ taskId, setView }: ExecutionViewProps) {
 
   const completeStepMutation = useMutation({
     mutationFn: async (stepId: string) => {
-      const response = await fetch(`http://localhost:8000/execution/${taskId}/complete-step/${stepId}`, {
+      const response = await fetch(`https://rescue-flow-api.onrender.com/execution/${taskId}/complete-step/${stepId}`, {
         method: "POST"
       });
       if (!response.ok) throw new Error("Failed to complete step");
@@ -38,7 +38,7 @@ export default function ExecutionView({ taskId, setView }: ExecutionViewProps) {
 
   const startStepMutation = useMutation({
     mutationFn: async (stepId: string) => {
-      const response = await fetch(`http://localhost:8000/execution/${taskId}/start-step/${stepId}`, {
+      const response = await fetch(`https://rescue-flow-api.onrender.com/execution/${taskId}/start-step/${stepId}`, {
         method: "POST"
       });
       if (!response.ok) throw new Error("Failed to start step");
