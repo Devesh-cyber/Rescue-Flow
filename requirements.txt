@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pymongo
+python-dotenv
+pydantic
+langchain
+langchain-google-genai
+langchain-community
+langchain-core
+huggingface_hub
+pypdf
+pymupdf
+python-multipart
